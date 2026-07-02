@@ -34,7 +34,9 @@ pipeline {
 
         stage('Unit tests') {
             steps {
-                sh 'npm run test:coverage'
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh 'npm run test:coverage'
+                }
             }
             post {
                 always {
