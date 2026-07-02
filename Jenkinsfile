@@ -61,38 +61,40 @@ pipeline {
 
         stage('Quality Gate') {
             steps {
-                withCredentials([string(credentialsId: 'sonarcloud-token-frontend', variable: 'SONAR_TOKEN')]) {
-                    sh '''
-                        TASK_ID=$(grep -oP "(?<=ceTaskId=).+" .scannerwork/report-task.txt)
-                        SONAR_URL=$(grep -oP "(?<=serverUrl=).+" .scannerwork/report-task.txt)
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    withCredentials([string(credentialsId: 'sonarcloud-token-frontend', variable: 'SONAR_TOKEN')]) {
+                        sh '''
+                            TASK_ID=$(grep -oP "(?<=ceTaskId=).+" .scannerwork/report-task.txt)
+                            SONAR_URL=$(grep -oP "(?<=serverUrl=).+" .scannerwork/report-task.txt)
 
-                        STATUS="PENDING"
-                        for i in $(seq 1 30); do
-                            RESPONSE=$(curl -s -u ${SONAR_TOKEN}: "${SONAR_URL}/api/ce/task?id=${TASK_ID}")
-                            STATUS=$(echo "$RESPONSE" | grep -oP "(?<=\\"status\\":\\")[^\\"]+" | head -1)
-                            echo "Task status: $STATUS"
-                            if [ "$STATUS" = "SUCCESS" ] || [ "$STATUS" = "FAILED" ] \
-                                || [ "$STATUS" = "CANCELED" ]; then
-                                break
+                            STATUS="PENDING"
+                            for i in $(seq 1 30); do
+                                RESPONSE=$(curl -s -u ${SONAR_TOKEN}: "${SONAR_URL}/api/ce/task?id=${TASK_ID}")
+                                STATUS=$(echo "$RESPONSE" | grep -oP "(?<=\\"status\\":\\")[^\\"]+" | head -1)
+                                echo "Task status: $STATUS"
+                                if [ "$STATUS" = "SUCCESS" ] || [ "$STATUS" = "FAILED" ] \
+                                    || [ "$STATUS" = "CANCELED" ]; then
+                                    break
+                                fi
+                                sleep 10
+                            done
+
+                            if [ "$STATUS" != "SUCCESS" ]; then
+                                echo "SonarQube analysis task did not succeed: $STATUS"
+                                exit 1
                             fi
-                            sleep 10
-                        done
 
-                        if [ "$STATUS" != "SUCCESS" ]; then
-                            echo "SonarQube analysis task did not succeed: $STATUS"
-                            exit 1
-                        fi
+                            ANALYSIS_ID=$(echo "$RESPONSE" | grep -oP "(?<=\\"analysisId\\":\\")[^\\"]+")
+                            QG_RESPONSE=$(curl -s -u ${SONAR_TOKEN}: "${SONAR_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}")
+                            QG_STATUS=$(echo "$QG_RESPONSE" | grep -oP "(?<=\\"status\\":\\")[^\\"]+" | head -1)
+                            echo "Quality Gate status: $QG_STATUS"
 
-                        ANALYSIS_ID=$(echo "$RESPONSE" | grep -oP "(?<=\\"analysisId\\":\\")[^\\"]+")
-                        QG_RESPONSE=$(curl -s -u ${SONAR_TOKEN}: "${SONAR_URL}/api/qualitygates/project_status?analysisId=${ANALYSIS_ID}")
-                        QG_STATUS=$(echo "$QG_RESPONSE" | grep -oP "(?<=\\"status\\":\\")[^\\"]+" | head -1)
-                        echo "Quality Gate status: $QG_STATUS"
-
-                        if [ "$QG_STATUS" != "OK" ]; then
-                            echo "Quality Gate failed: $QG_STATUS"
-                            exit 1
-                        fi
-                    '''
+                            if [ "$QG_STATUS" != "OK" ]; then
+                                echo "Quality Gate failed: $QG_STATUS"
+                                exit 1
+                            fi
+                        '''
+                    }
                 }
             }
         }
