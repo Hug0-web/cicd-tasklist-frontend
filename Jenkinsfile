@@ -16,8 +16,6 @@ pipeline {
         DOCKERHUB_NAMESPACE   = 'CHANGE_ME'
         IMAGE_NAME            = "${DOCKERHUB_NAMESPACE}/tasklist-frontend"
         IMAGE_TAG             = "${env.BUILD_NUMBER}"
-        DEPLOY_HOST           = 'CHANGE_ME'
-        DEPLOY_USER           = 'CHANGE_ME'
     }
 
     stages {
@@ -91,17 +89,22 @@ pipeline {
                 branch 'main'
             }
             steps {
-                sshagent(credentials: ['deploy-server-ssh']) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no \$DEPLOY_USER@\$DEPLOY_HOST '
-                            docker pull ${IMAGE_NAME}:latest &&
-                            docker stop tasklist-frontend || true &&
-                            docker rm tasklist-frontend || true &&
-                            docker run -d --name tasklist-frontend --restart unless-stopped \
-                                -p 80:80 \
-                                ${IMAGE_NAME}:latest
-                        '
-                    """
+                withCredentials([
+                    string(credentialsId: 'deploy-host', variable: 'DEPLOY_HOST'),
+                    string(credentialsId: 'deploy-user', variable: 'DEPLOY_USER')
+                ]) {
+                    sshagent(credentials: ['deploy-server-ssh']) {
+                        sh """
+                            ssh -o StrictHostKeyChecking=no \$DEPLOY_USER@\$DEPLOY_HOST '
+                                docker pull ${IMAGE_NAME}:latest &&
+                                docker stop tasklist-frontend || true &&
+                                docker rm tasklist-frontend || true &&
+                                docker run -d --name tasklist-frontend --restart unless-stopped \
+                                    -p 80:80 \
+                                    ${IMAGE_NAME}:latest
+                            '
+                        """
+                    }
                 }
             }
         }
