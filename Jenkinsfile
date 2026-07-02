@@ -12,8 +12,10 @@ pipeline {
     }
 
     environment {
-        IMAGE_NAME = 'tasklist-frontend'
-        IMAGE_TAG  = "${env.BUILD_NUMBER}"
+        DOCKERHUB_NAMESPACE = 'hugolucas529'
+        IMAGE_NAME          = 'tasklist-frontend'
+        IMAGE_TAG           = "${env.BUILD_NUMBER}"
+        FULL_IMAGE          = "${DOCKERHUB_NAMESPACE}/${IMAGE_NAME}"
     }
 
     stages {
@@ -65,7 +67,64 @@ pipeline {
 
         stage('Docker build') {
             steps {
-                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} -t ${IMAGE_NAME}:latest ."
+                sh 'docker build -t $FULL_IMAGE:$IMAGE_TAG -t $FULL_IMAGE:latest .'
+            }
+        }
+
+        stage('Trivy security scan') {
+            steps {
+                sh '''
+                    mkdir -p reports/trivy
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v trivy-cache:/root/.cache/ \
+                        -v "$WORKSPACE/reports/trivy:/reports" \
+                        aquasec/trivy image \
+                        --format table \
+                        --severity CRITICAL,HIGH \
+                        --exit-code 0 \
+                        -o /reports/trivy-report-frontend.txt \
+                        $FULL_IMAGE:$IMAGE_TAG
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'reports/trivy/*.txt', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('SBOM generation (SPDX)') {
+            steps {
+                sh '''
+                    mkdir -p reports/sbom
+                    docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v trivy-cache:/root/.cache/ \
+                        -v "$WORKSPACE/reports/sbom:/reports" \
+                        aquasec/trivy image \
+                        --format spdx-json \
+                        -o /reports/sbom-frontend.spdx.json \
+                        $FULL_IMAGE:$IMAGE_TAG
+                '''
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'reports/sbom/*.json', allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Docker push (Docker Hub)') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
+                    sh '''
+                        echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                        docker push $FULL_IMAGE:$IMAGE_TAG
+                        docker push $FULL_IMAGE:latest
+                        docker logout
+                    '''
+                }
             }
         }
 
@@ -74,13 +133,13 @@ pipeline {
                 branch 'main'
             }
             steps {
-                sh """
+                sh '''
                     docker stop tasklist-frontend || true
                     docker rm tasklist-frontend || true
                     docker run -d --name tasklist-frontend --restart unless-stopped \
                         -p 80:80 \
-                        ${IMAGE_NAME}:latest
-                """
+                        $FULL_IMAGE:latest
+                '''
             }
         }
     }
